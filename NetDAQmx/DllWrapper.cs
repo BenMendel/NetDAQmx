@@ -1,4 +1,5 @@
-﻿using System.Runtime.InteropServices;
+﻿using NetDAQmx.Helpers;
+using System.Runtime.InteropServices;
 using System.Text;
 
 namespace NetDAQmx;
@@ -8,6 +9,10 @@ namespace NetDAQmx;
 /// </summary>
 public static class DllWrapper
 {
+    /// <summary>
+    /// Reads all available samples parameter
+    /// </summary>
+    public const int DAQmx_Val_Auto = -1;
     /// <summary>
     /// Values for the Line Grouping parameter of DAQmxCreateDIChan and DAQmxCreateDOChan
     /// </summary>
@@ -111,43 +116,28 @@ public static class DllWrapper
     internal static extern int DAQmxCreateDOChan(IntPtr taskHandle, string lines, string nameToAssignToLines, DAQmxLineGrouping lineGrouping);
 
     [DllImport(DllPath, CharSet = CharSet.Ansi, CallingConvention = CallingConvention.StdCall)]
-    internal static extern int DAQmxCreateAIVoltageChan(
-    IntPtr taskHandle,
-    string physicalChannel,
-    string nameToAssignToChannel,
-    DAQmxAITerminalConfiguration terminalConfig,
-    double minVal,
-    double maxVal,
-    DAQmxAOVoltageUnits units,
-    string? customScaleName = null
-    );
+    internal static extern int DAQmxCreateAIVoltageChan(IntPtr taskHandle, string physicalChannel, string nameToAssignToChannel, DAQmxAITerminalConfiguration terminalConfig, double minVal, double maxVal, DAQmxAOVoltageUnits units, string? customScaleName = null);
+
+    [DllImport(DllPath, CharSet = CharSet.Ansi, CallingConvention = CallingConvention.StdCall)]
+    internal static extern int DAQmxCreateAOVoltageChan(IntPtr taskHandle, string physicalChannel, string nameToAssignToChannel, double minVal, double maxVal, DAQmxAOVoltageUnits units, string? customScaleName = null);
 
     [DllImport(DllPath, CharSet = CharSet.Ansi, CallingConvention = CallingConvention.StdCall)]
     internal static extern int DAQmxWriteDigitalLines(IntPtr taskHandle, int numSampsPerChan, bool autoStart, double timeout, DAQmxDataLayout dataLayout, byte[] writeArray, out int sampsPerChanWritten, IntPtr reserved);
 
     [DllImport(DllPath, CharSet = CharSet.Ansi, CallingConvention = CallingConvention.StdCall)]
-    private static extern int DAQmxWriteDigitalU8(
-    IntPtr taskHandle,
-    int numSampsPerChan,
-    bool autoStart,
-    double timeout,
-    DAQmxDataLayout dataLayout,
-    byte[] writeArray,
-    out int sampsPerChanWritten,
-    IntPtr reserved
-    );
+    private static extern int DAQmxWriteDigitalU8(IntPtr taskHandle, int numSampsPerChan, bool autoStart, double timeout, DAQmxDataLayout dataLayout, byte[] writeArray, out int sampsPerChanWritten, IntPtr reserved);
 
-    internal static int DAQmxWriteDigitalU8(
-    IntPtr taskHandle,
-    int numSampsPerChan,
-    bool autoStart,
-    double timeout,
-    DAQmxDataLayout dataLayout,
-    byte[] writeArray,
-    out int sampsPerChanWritten
-    )
+    internal static int DAQmxWriteDigitalU8(IntPtr taskHandle, int numSampsPerChan, bool autoStart, double timeout, DAQmxDataLayout dataLayout, byte[] writeArray, out int sampsPerChanWritten)
     {
         return DAQmxWriteDigitalU8(taskHandle, numSampsPerChan, autoStart, timeout, dataLayout, writeArray, out sampsPerChanWritten, IntPtr.Zero);
+    }
+
+    [DllImport(DllPath, CharSet = CharSet.Ansi, CallingConvention = CallingConvention.StdCall)]
+    private static extern int DAQmxWriteAnalogScalarF64(IntPtr taskHandle, bool autoStart, double timeout, double value, IntPtr reserved);
+
+    internal static int DAQmxWriteAnalogScalarF64(IntPtr taskHandle, bool autoStart, double timeout, double value)
+    {
+        return DAQmxWriteAnalogScalarF64(taskHandle, autoStart, timeout, value, IntPtr.Zero);
     }
 
     [DllImport(DllPath, CharSet = CharSet.Ansi, CallingConvention = CallingConvention.StdCall)]
@@ -164,6 +154,54 @@ public static class DllWrapper
     out double value,
     IntPtr reserved
 );
+
+    [DllImport(DllPath, CharSet = CharSet.Ansi, CallingConvention = CallingConvention.StdCall)]
+    private static extern int DAQmxReadAnalogF64(
+    IntPtr taskHandle,
+    int numSampsPerChan,
+    double timeout,
+    DAQmxDataLayout fillMode,
+    double[] readArray,
+    uint arraySizeInSamps,
+    out int sampsPerChanRead,
+    IntPtr reserved
+    );
+
+    internal static int DAQmxReadAnalogF64(DaqTask daqTask,
+    int numSampsPerChan,
+    double timeout,
+    DAQmxDataLayout fillMode,
+    double[] readArray,
+    uint arraySizeInSamps,
+    out int sampsPerChanRead)
+    {
+        return DAQmxReadAnalogF64(daqTask.handle, numSampsPerChan, timeout, fillMode, readArray, arraySizeInSamps, out sampsPerChanRead, IntPtr.Zero);
+    }
+
+    internal static int DAQmxReadAnalogF64(DaqTask daqTask, double timeout, DAQmxDataLayout fillMode, double[] readArray, uint arraySizeInSamps, out int sampsPerChanRead, int numSampsPerChan = DAQmx_Val_Auto)
+    {
+        return DAQmxReadAnalogF64(daqTask, numSampsPerChan, timeout, fillMode, readArray, arraySizeInSamps, out sampsPerChanRead);
+    }
+
+    [DllImport(DllPath, CharSet = CharSet.Ansi, CallingConvention = CallingConvention.StdCall)]
+    private static extern int DAQmxReadDigitalU8(IntPtr taskHandle, int numSampsPerChan, double timeout, DAQmxDataLayout fillMode, byte[] readArray, uint arraySizeInSamps, out int sampsPerChanRead, IntPtr reserved);
+
+    /// <summary>
+    /// Reads a specified digital port as a 8bit number
+    /// </summary>
+    /// <param name="task"></param>
+    /// <param name="numSampsPerChan"></param>
+    /// <param name="timeout"></param>
+    /// <param name="fillMode"></param>
+    /// <param name="readArray"></param>
+    /// <param name="arraySizeInSamps"></param>
+    /// <param name="sampsPerChanRead"></param>
+    /// <returns></returns>
+    public static int DAQmxReadDigitalU8(Helpers.DaqTask task, int numSampsPerChan, double timeout, DAQmxDataLayout fillMode, byte[] readArray, uint arraySizeInSamps, out int sampsPerChanRead)
+    {
+        return DAQmxReadDigitalU8(task.handle, numSampsPerChan, timeout, fillMode, readArray, arraySizeInSamps, out sampsPerChanRead, IntPtr.Zero);
+    }
+
     internal static int DAQmxReadAnalogScalarF64(IntPtr taskHandle, double timeout, out double value)
     {
         return DAQmxReadAnalogScalarF64(taskHandle, timeout, out value, IntPtr.Zero);

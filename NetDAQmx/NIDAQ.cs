@@ -198,6 +198,11 @@ public class NIDAQ
         ThrowError(status);
     }
 
+    public static int DAQmxReadDigitalU8(DaqTask task, int numSampsPerChan, double timeout, DAQmxDataLayout fillMode, byte[] readArray, uint arraySizeInSamps, out int sampsPerChanRead)
+    {
+        return DllWrapper.DAQmxReadDigitalU8(task, numSampsPerChan, timeout, fillMode, readArray, arraySizeInSamps, out sampsPerChanRead);
+    }
+
     /// <summary>
     /// Creates a task and writes an entire port with a specific value
     /// </summary>
@@ -206,7 +211,6 @@ public class NIDAQ
     public void WritePort(byte port, byte data)
     {
         var identifier = $"{DeviceAlias}/port{port}";
-        var portWidth = DAQmxGetPhysicalChanDOPortWidth(identifier);
 
         using var task = new DaqTask();
         DAQmxCreateDOChan(task, identifier, DAQmxLineGrouping.ChanForAllLines);
@@ -215,6 +219,23 @@ public class NIDAQ
         DAQmxWriteDigitalU8(task, 1, true, 10.0, DAQmxDataLayout.GroupByChannel, dataArray, out int written);
     }
 
+    /// <summary>
+    /// Reading the value of the whole port as a byte
+    /// </summary>
+    /// <param name="port">The port number to read from</param>
+    /// <returns>The value of the port</returns>
+    public byte ReadPort(byte port)
+    {
+        var identifier = $"{DeviceAlias}/port{port}";
+
+        using var task = new DaqTask();
+        DAQmxCreateDOChan(task, identifier, DAQmxLineGrouping.ChanForAllLines);
+        byte[] readArray = new byte[1];
+        var status = DAQmxReadDigitalU8(task, 1, 10.0, DAQmxDataLayout.GroupByChannel, readArray, (uint)readArray.Length, out int samples_per_channel_read);
+        ThrowError(status);
+
+        return readArray[0];
+    }
     /// <summary>
     /// Creates channel(s) to measure voltage and adds the channel(s) to the task you specify with taskHandle. If your measurement requires the use of internal excitation or you need the voltage to be scaled by excitation, call DAQmxCreateAIVoltageChanWithExcit.
     /// </summary>
@@ -292,6 +313,30 @@ public class NIDAQ
         return result;
     }
 
+    /// <summary>
+    /// Creates channel(s) to generate voltage and adds the channel(s) to the task you specify with taskHandle, and then writes a floating-point sample to a task that contains a single analog output channel.
+    /// </summary>
+    /// <param name="channel"></param>
+    /// <param name="value"></param>
+    /// <param name="minVal"></param>
+    /// <param name="maxVal"></param>
+    public void SetAnalogInputValue(uint channel, double value, double minVal = 0, double maxVal = 5)
+    {
+        using var task = new DaqTask();
+        var status = DAQmxCreateAOVoltageChan(task.handle, $"{DeviceAlias}/ao{channel}", "", minVal, maxVal, DAQmxAOVoltageUnits.Volts);
+        ThrowError(status);
+        status = DAQmxWriteAnalogScalarF64(task.handle, true, 10, value);
+        ThrowError(status);
+    }
+
+    public double GetAnalogInputSingleLine(uint channel, double minValue, double maxValue, double[] readArray)
+    {
+        using var task = new DaqTask();
+        DAQmxCreateAIVoltageChan(task, $"{DeviceAlias}/ai{channel}", "", DAQmxAITerminalConfiguration.RSE, minValue, maxValue, DAQmxAOVoltageUnits.Volts);
+        var status = DAQmxReadAnalogF64(task, 10, DAQmxDataLayout.GroupByChannel, readArray, (uint)readArray.Length, out _, readArray.Length);
+        ThrowError(status);
+        return readArray.Average();
+    }
     /// <summary>
     /// Handle errors here using DAQmxGetErrorString (or try DAQmxGetExtendedErrorInfo).
     /// </summary>
