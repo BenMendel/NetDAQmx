@@ -8,7 +8,7 @@
 		<AllowUnsafeBlocks>true</AllowUnsafeBlocks>
 		<TreatWarningsAsErrors>true</TreatWarningsAsErrors>
 		<GeneratePackageOnBuild>True</GeneratePackageOnBuild>
-		<Version>2.0.0-beta3</Version>
+		<Version>2.0.0-beta4</Version>
 		<Title>NI-DAQ Communication Library</Title>
 		<Description>C# .NET 10 wrapper for NI-DAQmx (nicaiu.dll). Requires x86 platform target.</Description>
 		<PackageProjectUrl>https://github.com/jrdnwrth/NetDAQmx</PackageProjectUrl>
