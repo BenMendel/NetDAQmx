@@ -1,15 +1,16 @@
-﻿<Project Sdk="Microsoft.NET.Sdk">
+<Project Sdk="Microsoft.NET.Sdk">
 
 	<PropertyGroup>
-		<TargetFramework>net7.0</TargetFramework>
+		<TargetFramework>net10.0</TargetFramework>
 		<ImplicitUsings>enable</ImplicitUsings>
 		<Nullable>enable</Nullable>
 		<Platforms>x86</Platforms>
 		<AllowUnsafeBlocks>true</AllowUnsafeBlocks>
+		<TreatWarningsAsErrors>true</TreatWarningsAsErrors>
 		<GeneratePackageOnBuild>True</GeneratePackageOnBuild>
-		<Version>1.0.0-preview4</Version>
-		<Title>NI-Daq Communication Library</Title>
-		<Description>This library wraps the native ANSI C library into .NET 7</Description>
+		<Version>2.0.0-beta1</Version>
+		<Title>NI-DAQ Communication Library</Title>
+		<Description>C# .NET 10 wrapper for NI-DAQmx (nicaiu.dll). Requires x86 platform target.</Description>
 		<PackageProjectUrl>https://github.com/jrdnwrth/NetDAQmx</PackageProjectUrl>
 		<NeutralLanguage>en</NeutralLanguage>
 		<GenerateDocumentationFile>True</GenerateDocumentationFile>

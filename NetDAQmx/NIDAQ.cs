@@ -1,358 +1,286 @@
-﻿using NetDAQmx.Helpers;
+using NetDAQmx.Helpers;
 using System.Text;
 using static NetDAQmx.DllWrapper;
 
 namespace NetDAQmx;
 
 /// <summary>
-/// This would not be much of a library if the user had to call the raw DLL functions.
-/// This class provides more user-friendly functions for interacting with NI-DAQ and represents a NI-DAQ instance.
+/// High-level .NET API for a connected NI-DAQ device.
+/// Implements <see cref="IDaqDevice"/> for real hardware access via nicaiu.dll.
+/// For unit testing without hardware, implement <see cref="IDaqDevice"/> with a simulation class.
 /// </summary>
-public class NIDAQ
+public class NIDAQ : IDaqDevice
 {
-    /// <summary>
-    /// Indicates the names of all devices installed in the system
-    /// </summary>
-    /// <param name="bufferSize">The buffer's length</param>
-    /// <returns>The array of device's names</returns>
-    public static string[] GetSystemDevices(int bufferSize = 100)
-    {
-        // Create a buffer to store the device names
-        char[] buffer = new char[bufferSize];
+    // ── Static helpers ────────────────────────────────────────────────────────
 
-        // Call the DAQmxGetSysDevNames function
+    /// <summary>
+    /// Returns the aliases of all NI-DAQmx devices currently installed in the system.
+    /// </summary>
+    public static string[] GetSystemDevices()
+    {
+        // Use a large buffer; NI-DAQ returns a null-delimited, double-null-terminated string.
+        char[] buffer = new char[4096];
         int status = DAQmxGetSysDevNames(buffer);
 
-        // Check the result and handle it accordingly
-        if (status == 0)
-        {
-            string deviceNames = new string(buffer).TrimEnd('\0'); ; // Convert char array to string
-            var result = deviceNames.Split('\0');
-            if (result.Length > 0 && string.IsNullOrEmpty(result[0])) // no devices attached
-            {
-                return Array.Empty<string>();
-            }
-            return result;
-        }
+        if (status != 0)
+            return Array.Empty<string>();
 
-        Console.WriteLine("Error occurred: " + status);
-        return Array.Empty<string>();
+        string deviceNames = new string(buffer).TrimEnd('\0');
+        if (string.IsNullOrEmpty(deviceNames))
+            return Array.Empty<string>();
+
+        return deviceNames.Split('\0', StringSplitOptions.RemoveEmptyEntries);
     }
 
     /// <summary>
-    /// The devices name in the system
+    /// Converts a DAQmx status code to a <see cref="DaqException"/>.
+    /// No-ops for success (code == 0).
     /// </summary>
+    public static void ThrowError(int code)
+    {
+        if (code == 0)
+            return;
+
+        var message = new StringBuilder(2048);
+        DAQmxGetErrorString(code, message, (uint)message.Capacity);
+
+        var extended = new StringBuilder(4096);
+        DAQmxGetExtendedErrorInfo(extended, (uint)extended.Capacity);
+
+        string msg = message.ToString().Trim();
+        if (msg.Length == 0)
+            msg = $"DAQmx error code {code}";
+
+        throw new DaqException(code, msg, extended.ToString().Trim());
+    }
+
+    // ── Instance ──────────────────────────────────────────────────────────────
+
+    /// <inheritdoc/>
     public string DeviceAlias { get; }
 
-    /// <summary>
-    /// Constructor
-    /// </summary>
-    /// <param name="deviceAlias">The devices name in the system</param>
+    /// <summary>Creates a device handle for the specified NI-MAX device alias.</summary>
+    /// <param name="deviceAlias">The device alias as shown in NI-MAX (e.g. <c>"Dev1"</c>).</param>
     public NIDAQ(string deviceAlias = "Dev0")
     {
         DeviceAlias = deviceAlias;
     }
 
-    /// <summary>
-    /// Indicates in bits the width of digital output port
-    /// </summary>
-    /// <param name="identifier">The path to the port. E.g. - Dev1/port0</param>
-    /// <returns>The width of digital output port</returns>
-    public static uint DAQmxGetPhysicalChanDOPortWidth(string identifier)
+    // ── Device management ─────────────────────────────────────────────────────
+
+    /// <inheritdoc/>
+    public bool SupportsHardwareTiming()
     {
-        var status = DllWrapper.DAQmxGetPhysicalChanDOPortWidth(identifier, out uint portWidth);
+        // NI USB-6008 returns false for AO; true for CI (counter). We check AO as the
+        // representative test since AI/AO share the same software-timed constraint.
+        var status = DAQmxGetDevAOSampClkSupported(DeviceAlias, out bool supported);
         ThrowError(status);
-
-        return portWidth;
+        return supported;
     }
 
-    /// <summary>
-    /// Indicates in bits the width of digital output port
-    /// </summary>
-    /// <param name="port">The number of port</param>
-    /// <returns>The width of digital output port</returns>
-    public uint DAQmxGetPhysicalChanDOPortWidth(byte port)
+    /// <inheritdoc/>
+    public void ResetDevice()
     {
-        return DAQmxGetPhysicalChanDOPortWidth($"{DeviceAlias}/port{port}");
+        var status = DAQmxResetDevice(DeviceAlias);
+        ThrowError(status);
     }
 
-    /// <summary>
-    /// Writes a single digital output to be on or off 
-    /// </summary>
-    /// <param name="port">The port number</param>
-    /// <param name="channel">The channel number</param>
-    /// <param name="close">True to close the line, o/w open</param>
-    public void WriteDOChannel(byte port, uint channel, bool close)
+    /// <inheritdoc/>
+    public uint GetPortWidth(byte port)
     {
-        WriteDOSingleLine(DeviceAlias, port, channel, close);
+        var status = DAQmxGetPhysicalChanDOPortWidth($"{DeviceAlias}/port{port}", out uint width);
+        ThrowError(status);
+        return width;
     }
 
-    /// <summary>
-    /// Creates a task and writes a single line of a DO port
-    /// </summary>
-    /// <param name="deviceAlias">The device name. E.g. - "Dev1"</param>
-    /// <param name="port">The port number</param>
-    /// <param name="channel">The channel number</param>
-    /// <param name="close"><see langword="true"/> to close the line, o/w open</param>
-    public static void WriteDOSingleLine(string deviceAlias, byte port, uint channel, bool close)
-    {
-        string identifier = $"{deviceAlias}/port{port}/line{channel}";
+    // ── Digital output ────────────────────────────────────────────────────────
 
+    /// <inheritdoc/>
+    public void WriteDigitalOutput(byte port, uint channel, bool value)
+    {
+        string identifier = $"{DeviceAlias}/port{port}/line{channel}";
         using var task = new DaqTask();
-        var status = DllWrapper.DAQmxCreateDOChan(task.handle, identifier, "", DAQmxLineGrouping.ChanPerLine);
+        var status = DAQmxCreateDOChan(task.handle, identifier, "", DAQmxLineGrouping.ChanPerLine);
         ThrowError(status);
-
-        byte[] data = new byte[] { close ? (byte)0 : (byte)1 };
-        status = DllWrapper.DAQmxWriteDigitalLines(task.handle, 1, true, 10.0, DAQmxDataLayout.GroupByChannel, data, out int written, IntPtr.Zero);
+        // value=true → drive high (1); value=false → drive low (0)
+        byte[] data = [value ? (byte)1 : (byte)0];
+        status = DAQmxWriteDigitalLines(task.handle, 1, true, DaqDefaults.TimeoutSeconds,
+            DAQmxDataLayout.GroupByChannel, data, out _, IntPtr.Zero);
         ThrowError(status);
     }
 
-    /// <summary>
-    /// Reads a single line from the given port and channel
-    /// </summary>
-    /// <param name="port">The port you want to read from</param>
-    /// <param name="channel">The channel/line you want to read from</param>
-    /// <returns><see langword="true"/> if the line is open. <see langword="false"/> otherwise</returns>
-    public bool IsLineOpen(byte port, uint channel)
+    /// <inheritdoc/>
+    public void WriteDigitalPort(byte port, byte data)
     {
-        return IsLineOpen(DeviceAlias, port, channel);
-    }
-
-    /// <summary>
-    /// Reads a single line from the given port and channel
-    /// </summary>
-    /// <param name="deviceAlias">The devices name in the system</param>
-    /// <param name="port">The port you want to read from</param>
-    /// <param name="channel">The channel/line you want to read from</param>
-    /// <returns><see langword="true"/> if the line is open. <see langword="false"/> otherwise</returns>
-    public static bool IsLineOpen(string deviceAlias, byte port, uint channel)
-    {
-        string identifier = $"{deviceAlias}/port{port}/line{channel}";
-
+        string identifier = $"{DeviceAlias}/port{port}";
         using var task = new DaqTask();
-        var status = DllWrapper.DAQmxCreateDOChan(task.handle, identifier, "", 0);
+        var status = DAQmxCreateDOChan(task.handle, identifier, "", DAQmxLineGrouping.ChanForAllLines);
         ThrowError(status);
+        byte[] dataArray = [data];
+        status = DAQmxWriteDigitalU8(task.handle, 1, true, DaqDefaults.TimeoutSeconds,
+            DAQmxDataLayout.GroupByChannel, dataArray, out _);
+        ThrowError(status);
+    }
 
+    // ── Digital input ─────────────────────────────────────────────────────────
+
+    /// <inheritdoc/>
+    public bool ReadDigitalInput(byte port, uint channel)
+    {
+        string identifier = $"{DeviceAlias}/port{port}/line{channel}";
+        using var task = new DaqTask();
+        var status = DAQmxCreateDIChan(task.handle, identifier, "", DAQmxLineGrouping.ChanPerLine);
+        ThrowError(status);
         byte[] data = new byte[8];
-
-        status = DAQmxReadDigitalLines(task.handle, 1, 10.0, DAQmxDataLayout.GroupByChannel, data, (uint)data.Length, out int samples_per_channel_read, out int bytes_per_channel);
+        status = DAQmxReadDigitalLines(task.handle, 1, DaqDefaults.TimeoutSeconds,
+            DAQmxDataLayout.GroupByChannel, data, (uint)data.Length, out _, out _);
         ThrowError(status);
-
         return data[0] == 1;
     }
 
-    /// <summary>
-    /// Creates channel(s) to generate digital signals and adds the channel(s) to the task you specify with taskHandle. You can group digital lines into one digital channel or separate them into multiple digital channels. If you specify one or more entire ports in lines by using port physical channel names, you cannot separate the ports into multiple channels. To separate ports into multiple channels, use this function multiple times with a different port each time.
-    /// </summary>
-    /// <param name="task">The task to which to add the channels that this function creates</param>
-    /// <param name="lines">The names of the digital lines used to create a virtual channel. You can specify a list or range of lines. Specifying a port and no lines is the equivalent of specifying all the lines of that port in order. Therefore, if you specify Dev1/port0 and port 0 has eight lines, this is expanded to Dev1/port0/line0:7. </param>
-    /// <param name="lineGrouping">Specifies whether to group digital lines into one or more virtual channels. If you specify one or more entire ports in lines, you must set lineGrouping to ChanForAllLines</param>
-    /// <param name="nameToAssignToLines">The name of the created virtual channel(s). If you create multiple virtual channels with one call to this function, you can specify a list of names separated by commas. If you do not specify a name, NI-DAQmx uses the physical channel name as the virtual channel name. If you specify your own names for nameToAssignToLines, you must use the names when you refer to these channels in other NI-DAQmx functions.</param>
-    public static void DAQmxCreateDOChan(DaqTask task, string lines, DAQmxLineGrouping lineGrouping, string nameToAssignToLines = "")
+    /// <inheritdoc/>
+    public byte ReadDigitalPort(byte port)
     {
-        var status = DllWrapper.DAQmxCreateDOChan(task.handle, lines, nameToAssignToLines, lineGrouping);
-        ThrowError(status);
-    }
-
-    /// <summary>
-    /// Creates channel(s) to generate digital signals and adds the channel(s) to the task you specify with taskHandle. You can group digital lines into one digital channel or separate them into multiple digital channels. If you specify one or more entire ports in lines by using port physical channel names, you cannot separate the ports into multiple channels. To separate ports into multiple channels, use this function multiple times with a different port each time.
-    /// </summary>
-    /// <param name="task">The task to which to add the channels that this function creates</param>
-    /// <param name="port">The port number</param>
-    /// <param name="line">The line number</param>
-    /// <param name="lineGrouping">Specifies whether to group digital lines into one or more virtual channels. If you specify one or more entire ports in lines, you must set lineGrouping to DAQmx_Val_ChanForAllLines</param>
-    /// <param name="nameToAssignToLines">The name of the created virtual channel(s). If you create multiple virtual channels with one call to this function, you can specify a list of names separated by commas. If you do not specify a name, NI-DAQmx uses the physical channel name as the virtual channel name. If you specify your own names for nameToAssignToLines, you must use the names when you refer to these channels in other NI-DAQmx functions.</param>
-    public void DAQmxCreateDOChan(DaqTask task, byte port, int line, DAQmxLineGrouping lineGrouping, string nameToAssignToLines = "")
-    {
-        DAQmxCreateDOChan(task, $"{DeviceAlias}/port{port}/line{line}", lineGrouping, nameToAssignToLines);
-    }
-
-    /// <summary>
-    /// Creates channel(s) to generate digital signals and adds the channel(s) to the task you specify with taskHandle. You can group digital lines into one digital channel or separate them into multiple digital channels. If you specify one or more entire ports in lines by using port physical channel names, you cannot separate the ports into multiple channels. To separate ports into multiple channels, use this function multiple times with a different port each time.
-    /// </summary>
-    /// <param name="task">The task to which to add the channels that this function creates</param>
-    /// <param name="port">The port number</param>
-    /// <param name="lineStart">The first line number to include</param>
-    /// <param name="lineEnd">The last line number to include</param>
-    /// <param name="lineGrouping">Specifies whether to group digital lines into one or more virtual channels. If you specify one or more entire ports in lines, you must set lineGrouping to DAQmx_Val_ChanForAllLines</param>
-    /// <param name="nameToAssignToLines">The name of the created virtual channel(s). If you create multiple virtual channels with one call to this function, you can specify a list of names separated by commas. If you do not specify a name, NI-DAQmx uses the physical channel name as the virtual channel name. If you specify your own names for nameToAssignToLines, you must use the names when you refer to these channels in other NI-DAQmx functions</param>
-    public void DAQmxCreateDOChan(DaqTask task, byte port, byte lineStart, byte lineEnd, DAQmxLineGrouping lineGrouping, string nameToAssignToLines = "")
-    {
-        DAQmxCreateDOChan(task, $"{DeviceAlias}/port{port}/line{lineStart}:{lineEnd}", lineGrouping, nameToAssignToLines);
-    }
-
-    /// <summary>
-    /// Writes multiple 8-bit unsigned integer samples to a task that contains one or more digital output channels. Use this format for devices with up to 8 lines per port.
-    /// </summary>
-    /// <param name="task">The task to write samples to</param>
-    /// <param name="numSamplesPerChan">The number of samples, per channel, to write. You must pass in a value of 0 or more in order for the sample to write. If you pass a negative number, this function returns an error</param>
-    /// <param name="autoStart">Specifies whether or not this function automatically starts the task if you do not start it</param>
-    /// <param name="timeout">The amount of time, in seconds, to wait for this function to write all the samples. To specify an infinite wait, pass -1 (DAQmx_Val_WaitInfinitely). This function returns an error if the timeout elapses. 
-    /// A value of 0 indicates to try once to write the submitted samples. If this function successfully writes all submitted samples, it does not return an error. Otherwise, the function returns a timeout error and returns the number of samples actually written</param>
-    /// <param name="dataLayout">Specifies how the samples are arranged, either interleaved or noninterleaved</param>
-    /// <param name="writeArray">The array of 8-bit integer samples to write to the task</param>
-    /// <param name="sampsPerChanWritten">The actual number of samples per channel successfully written to the buffer</param>
-    public static void DAQmxWriteDigitalU8(DaqTask task, int numSamplesPerChan, bool autoStart, double timeout, DAQmxDataLayout dataLayout, byte[] writeArray, out int sampsPerChanWritten)
-    {
-        var status = DllWrapper.DAQmxWriteDigitalU8(task.handle, numSamplesPerChan, autoStart, timeout, dataLayout, writeArray, out sampsPerChanWritten);
-        ThrowError(status);
-    }
-
-    public static int DAQmxReadDigitalU8(DaqTask task, int numSampsPerChan, double timeout, DAQmxDataLayout fillMode, byte[] readArray, uint arraySizeInSamps, out int sampsPerChanRead)
-    {
-        return DllWrapper.DAQmxReadDigitalU8(task, numSampsPerChan, timeout, fillMode, readArray, arraySizeInSamps, out sampsPerChanRead);
-    }
-
-    /// <summary>
-    /// Creates a task and writes an entire port with a specific value
-    /// </summary>
-    /// <param name="port">The port number</param>
-    /// <param name="data">The data to write to the port</param>
-    public void WritePort(byte port, byte data)
-    {
-        var identifier = $"{DeviceAlias}/port{port}";
-
+        string identifier = $"{DeviceAlias}/port{port}";
         using var task = new DaqTask();
-        DAQmxCreateDOChan(task, identifier, DAQmxLineGrouping.ChanForAllLines);
-
-        byte[] dataArray = new byte[] { data };
-        DAQmxWriteDigitalU8(task, 1, true, 10.0, DAQmxDataLayout.GroupByChannel, dataArray, out int written);
-    }
-
-    /// <summary>
-    /// Reading the value of the whole port as a byte
-    /// </summary>
-    /// <param name="port">The port number to read from</param>
-    /// <returns>The value of the port</returns>
-    public byte ReadPort(byte port)
-    {
-        var identifier = $"{DeviceAlias}/port{port}";
-
-        using var task = new DaqTask();
-        DAQmxCreateDOChan(task, identifier, DAQmxLineGrouping.ChanForAllLines);
-        byte[] readArray = new byte[1];
-        var status = DAQmxReadDigitalU8(task, 1, 10.0, DAQmxDataLayout.GroupByChannel, readArray, (uint)readArray.Length, out int samples_per_channel_read);
+        var status = DAQmxCreateDIChan(task.handle, identifier, "", DAQmxLineGrouping.ChanForAllLines);
         ThrowError(status);
-
-        return readArray[0];
-    }
-    /// <summary>
-    /// Creates channel(s) to measure voltage and adds the channel(s) to the task you specify with taskHandle. If your measurement requires the use of internal excitation or you need the voltage to be scaled by excitation, call DAQmxCreateAIVoltageChanWithExcit.
-    /// </summary>
-    /// <param name="task">The task to which to add the channels that this function creates</param>
-    /// <param name="physicalChannel">The names of the physical channels to use to create virtual channels. You can specify a list or range of physical channels</param>
-    /// <param name="nameToAssignToChannel">The name(s) to assign to the created virtual channel(s). If you do not specify a name, NI-DAQmx uses the physical channel name as the virtual channel name. If you specify your own names for nameToAssignToChannel, you must use the names when you refer to these channels in other NI-DAQmx functions. If you create multiple virtual channels with one call to this function, you can specify a list of names separated by commas. If you provide fewer names than the number of virtual channels you create, NI-DAQmx automatically assigns names to the virtual channels.</param>
-    /// <param name="terminalConfig">The input terminal configuration for the channel</param>
-    /// <param name="minVal">The minimum value, in units, that you expect to measure</param>
-    /// <param name="maxVal">The maximum value, in units, that you expect to measure</param>
-    /// <param name="units">The units to use to return the voltage measurements</param>
-    /// <param name="customScaleName">The name of a custom scale to apply to the channel. To use this parameter, you must set units to DAQmx_Val_FromCustomScale. If you do not set units to DAQmx_Val_FromCustomScale, you must set customScaleName to NULL</param>
-    public static void DAQmxCreateAIVoltageChan(DaqTask task, string physicalChannel, string nameToAssignToChannel, DAQmxAITerminalConfiguration terminalConfig, double minVal, double maxVal, DAQmxAOVoltageUnits units, string? customScaleName = null)
-    {
-        var status = DllWrapper.DAQmxCreateAIVoltageChan(task.handle, physicalChannel, nameToAssignToChannel, terminalConfig, minVal, maxVal, units, customScaleName);
+        status = DAQmxReadDigitalScalarU32(task.handle, DaqDefaults.TimeoutSeconds, out uint value);
         ThrowError(status);
+        return (byte)value;
     }
 
-    /// <summary>
-    /// Creates channel(s) to measure voltage and adds the channel(s) to the task you specify with taskHandle. If your measurement requires the use of internal excitation or you need the voltage to be scaled by excitation, call DAQmxCreateAIVoltageChanWithExcit.
-    /// </summary>
-    /// <param name="task">The task to which to add the channels that this function creates</param>
-    /// <param name="analogInput">The line to read from</param>
-    /// <param name="nameToAssignToChannel">The name(s) to assign to the created virtual channel(s). If you do not specify a name, NI-DAQmx uses the physical channel name as the virtual channel name. If you specify your own names for nameToAssignToChannel, you must use the names when you refer to these channels in other NI-DAQmx functions. If you create multiple virtual channels with one call to this function, you can specify a list of names separated by commas. If you provide fewer names than the number of virtual channels you create, NI-DAQmx automatically assigns names to the virtual channels.</param>
-    /// <param name="terminalConfig">The input terminal configuration for the channel</param>
-    /// <param name="minVal">The minimum value, in units, that you expect to measure</param>
-    /// <param name="maxVal">The maximum value, in units, that you expect to measure</param>
-    /// <param name="units">The units to use to return the voltage measurements</param>
-    /// <param name="customScaleName">The name of a custom scale to apply to the channel. To use this parameter, you must set units to DAQmx_Val_FromCustomScale. If you do not set units to DAQmx_Val_FromCustomScale, you must set customScaleName to NULL</param>
-    public void DAQmxCreateAIVoltageChan(DaqTask task, byte analogInput, string nameToAssignToChannel, DAQmxAITerminalConfiguration terminalConfig, double minVal, double maxVal, DAQmxAOVoltageUnits units, string? customScaleName = null)
-    {
-        DAQmxCreateAIVoltageChan(task, $"{DeviceAlias}/ai{analogInput}", nameToAssignToChannel, terminalConfig, minVal, maxVal, units, customScaleName);
-    }
+    // ── Analog input ──────────────────────────────────────────────────────────
 
-    /// <summary>
-    /// Creates channel(s) to measure voltage and adds the channel(s) to the task you specify with taskHandle. If your measurement requires the use of internal excitation or you need the voltage to be scaled by excitation, call DAQmxCreateAIVoltageChanWithExcit.
-    /// </summary>
-    /// <param name="task">The task to which to add the channels that this function creates</param>
-    /// <param name="analogInputStart">The start of the range of the analog line</param>
-    /// <param name="analogInputEnd">The end of the range of the analog line</param>
-    /// <param name="nameToAssignToChannel">The name(s) to assign to the created virtual channel(s). If you do not specify a name, NI-DAQmx uses the physical channel name as the virtual channel name. If you specify your own names for nameToAssignToChannel, you must use the names when you refer to these channels in other NI-DAQmx functions. If you create multiple virtual channels with one call to this function, you can specify a list of names separated by commas. If you provide fewer names than the number of virtual channels you create, NI-DAQmx automatically assigns names to the virtual channels.</param>
-    /// <param name="terminalConfig">The input terminal configuration for the channel</param>
-    /// <param name="minVal">The minimum value, in units, that you expect to measure</param>
-    /// <param name="maxVal">The maximum value, in units, that you expect to measure</param>
-    /// <param name="units">The units to use to return the voltage measurements</param>
-    /// <param name="customScaleName">The name of a custom scale to apply to the channel. To use this parameter, you must set units to DAQmx_Val_FromCustomScale. If you do not set units to DAQmx_Val_FromCustomScale, you must set customScaleName to NULL</param>
-    public void DAQmxCreateAIVoltageChan(DaqTask task, byte analogInputStart, byte analogInputEnd, string nameToAssignToChannel, DAQmxAITerminalConfiguration terminalConfig, double minVal, double maxVal, DAQmxAOVoltageUnits units, string? customScaleName = null)
-    {
-        DAQmxCreateAIVoltageChan(task, $"{DeviceAlias}/ai{analogInputStart}:{analogInputEnd}", nameToAssignToChannel, terminalConfig, minVal, maxVal, units, customScaleName);
-    }
-
-    /// <summary>
-    /// Reads a single floating-point sample from a task that contains a single analog input channel
-    /// </summary>
-    /// <param name="task">The task to read the sample from</param>
-    /// <param name="timeout">The amount of time, in seconds, to wait for the function to read the sample(s). To specify an infinite wait, pass -1 (DAQmx_Val_WaitInfinitely). This function returns an error if the timeout elapses. A value of 0 indicates to try once to read the requested samples. If all the requested samples are read, the function is successful. Otherwise, the function returns a timeout error and returns the samples that were actually read</param>
-    /// <param name="result">The sample read from the task</param>
-    public static void DAQmxReadAnalogScalarF64(DaqTask task, double timeout, out double result)
-    {
-        var status = DllWrapper.DAQmxReadAnalogScalarF64(task.handle, timeout, out result);
-        ThrowError(status);
-    }
-
-    /// <summary>
-    /// Create a task and reads a single floating-point sample from a task that contains a single analog input channel
-    /// </summary>
-    /// <param name="channel">The line to read from</param>
-    /// <param name="minValue">The minimum value, in units, that you expect to measure</param>
-    /// <param name="maxValue">The maximum value, in units, that you expect to measure</param>
-    /// <returns></returns>
-    public double GetAnalogInputSingleLine(uint channel, double minValue, double maxValue)
+    /// <inheritdoc/>
+    public double ReadAnalogInput(uint channel, double minValue, double maxValue,
+        double timeout = DaqDefaults.TimeoutSeconds)
     {
         using var task = new DaqTask();
-        DAQmxCreateAIVoltageChan(task, $"{DeviceAlias}/ai{channel}", "", DAQmxAITerminalConfiguration.RSE, minValue, maxValue, DAQmxAOVoltageUnits.Volts);
-        DAQmxReadAnalogScalarF64(task, 10, out double result);
+        var status = DAQmxCreateAIVoltageChan(task.handle, $"{DeviceAlias}/ai{channel}", "",
+            DAQmxAITerminalConfiguration.RSE, minValue, maxValue, DAQmxAIVoltageUnits.Volts);
+        ThrowError(status);
+        status = DAQmxReadAnalogScalarF64(task.handle, timeout, out double result);
+        ThrowError(status);
         return result;
     }
 
-    /// <summary>
-    /// Creates channel(s) to generate voltage and adds the channel(s) to the task you specify with taskHandle, and then writes a floating-point sample to a task that contains a single analog output channel.
-    /// </summary>
-    /// <param name="channel"></param>
-    /// <param name="value"></param>
-    /// <param name="minVal"></param>
-    /// <param name="maxVal"></param>
+    /// <inheritdoc/>
+    public double ReadAnalogInput(uint channel, double minValue, double maxValue,
+        double[] buffer, double timeout = DaqDefaults.TimeoutSeconds)
+    {
+        using var task = new DaqTask();
+        var status = DAQmxCreateAIVoltageChan(task.handle, $"{DeviceAlias}/ai{channel}", "",
+            DAQmxAITerminalConfiguration.RSE, minValue, maxValue, DAQmxAIVoltageUnits.Volts);
+        ThrowError(status);
+        status = DAQmxReadAnalogF64(task, timeout, DAQmxDataLayout.GroupByChannel,
+            buffer, (uint)buffer.Length, out _);
+        ThrowError(status);
+        return buffer.Average();
+    }
+
+    // ── Analog output ─────────────────────────────────────────────────────────
+
+    /// <inheritdoc/>
+    public void WriteAnalogOutput(uint channel, double value,
+        double minVal = 0.0, double maxVal = 5.0,
+        double timeout = DaqDefaults.TimeoutSeconds)
+    {
+        using var task = new DaqTask();
+        var status = DAQmxCreateAOVoltageChan(task.handle, $"{DeviceAlias}/ao{channel}", "",
+            minVal, maxVal, DAQmxAOVoltageUnits.Volts);
+        ThrowError(status);
+        status = DAQmxWriteAnalogScalarF64(task.handle, true, timeout, value);
+        ThrowError(status);
+    }
+
+    // ── Counter ───────────────────────────────────────────────────────────────
+
+    /// <inheritdoc/>
+    public uint ReadEdgeCount(string counterChannel,
+        double timeout = DaqDefaults.TimeoutSeconds)
+    {
+        using var task = new DaqTask();
+        var status = DAQmxCreateCICountEdgesChan(task.handle, counterChannel, "",
+            (int)DAQmxEdge.Rising, 0, (int)DAQmxCountDirection.Up);
+        ThrowError(status);
+        task.Start();
+        status = DAQmxReadCounterScalarU32(task.handle, timeout, out uint count);
+        task.Stop();
+        ThrowError(status);
+        return count;
+    }
+
+    // ── Async variants ────────────────────────────────────────────────────────
+
+    /// <inheritdoc/>
+    public Task<double> ReadAnalogInputAsync(uint channel, double minValue, double maxValue,
+        double timeout = DaqDefaults.TimeoutSeconds, CancellationToken ct = default)
+        => Task.Run(() => ReadAnalogInput(channel, minValue, maxValue, timeout), ct);
+
+    /// <inheritdoc/>
+    public Task WriteAnalogOutputAsync(uint channel, double value,
+        double minVal = 0.0, double maxVal = 5.0,
+        double timeout = DaqDefaults.TimeoutSeconds, CancellationToken ct = default)
+        => Task.Run(() => WriteAnalogOutput(channel, value, minVal, maxVal, timeout), ct);
+
+    /// <inheritdoc/>
+    public Task<bool> ReadDigitalInputAsync(byte port, uint channel, CancellationToken ct = default)
+        => Task.Run(() => ReadDigitalInput(port, channel), ct);
+
+    /// <inheritdoc/>
+    public Task WriteDigitalOutputAsync(byte port, uint channel, bool value, CancellationToken ct = default)
+        => Task.Run(() => WriteDigitalOutput(port, channel, value), ct);
+
+    /// <inheritdoc/>
+    public Task<byte> ReadDigitalPortAsync(byte port, CancellationToken ct = default)
+        => Task.Run(() => ReadDigitalPort(port), ct);
+
+    /// <inheritdoc/>
+    public Task WriteDigitalPortAsync(byte port, byte data, CancellationToken ct = default)
+        => Task.Run(() => WriteDigitalPort(port, data), ct);
+
+    /// <inheritdoc/>
+    public Task<uint> ReadEdgeCountAsync(string counterChannel,
+        double timeout = DaqDefaults.TimeoutSeconds, CancellationToken ct = default)
+        => Task.Run(() => ReadEdgeCount(counterChannel, timeout), ct);
+
+    // ── Obsolete API (v1.x compatibility) ────────────────────────────────────
+
+    /// <inheritdoc cref="WriteDigitalOutput"/>
+    [Obsolete("Use WriteDigitalOutput. Note: the 'close' parameter had relay-specific semantics; " +
+              "WriteDigitalOutput(port, channel, !close) is the equivalent call.")]
+    public void WriteDOChannel(byte port, uint channel, bool close)
+        => WriteDigitalOutput(port, channel, !close);
+
+    /// <inheritdoc cref="ReadDigitalInput"/>
+    [Obsolete("Use ReadDigitalInput.")]
+    public bool IsLineOpen(byte port, uint channel)
+        => ReadDigitalInput(port, channel);
+
+    /// <inheritdoc cref="WriteDigitalPort"/>
+    [Obsolete("Use WriteDigitalPort.")]
+    public void WritePort(byte port, byte data)
+        => WriteDigitalPort(port, data);
+
+    /// <inheritdoc cref="ReadDigitalPort"/>
+    [Obsolete("Use ReadDigitalPort.")]
+    public byte ReadPort(byte port)
+        => ReadDigitalPort(port);
+
+    /// <inheritdoc cref="ReadAnalogInput(uint,double,double,double)"/>
+    [Obsolete("Use ReadAnalogInput.")]
+    public double GetAnalogInputSingleLine(uint channel, double minValue, double maxValue)
+        => ReadAnalogInput(channel, minValue, maxValue);
+
+    /// <inheritdoc cref="ReadAnalogInput(uint,double,double,double[],double)"/>
+    [Obsolete("Use ReadAnalogInput with a buffer parameter.")]
+    public double GetAnalogInputSingleLine(uint channel, double minValue, double maxValue,
+        double[] readArray)
+        => ReadAnalogInput(channel, minValue, maxValue, readArray);
+
+    /// <inheritdoc cref="WriteAnalogOutput"/>
+    [Obsolete("Use WriteAnalogOutput. The method name was incorrect — this writes analog output, not input.")]
     public void SetAnalogInputValue(uint channel, double value, double minVal = 0, double maxVal = 5)
-    {
-        using var task = new DaqTask();
-        var status = DAQmxCreateAOVoltageChan(task.handle, $"{DeviceAlias}/ao{channel}", "", minVal, maxVal, DAQmxAOVoltageUnits.Volts);
-        ThrowError(status);
-        status = DAQmxWriteAnalogScalarF64(task.handle, true, 10, value);
-        ThrowError(status);
-    }
-
-    public double GetAnalogInputSingleLine(uint channel, double minValue, double maxValue, double[] readArray)
-    {
-        using var task = new DaqTask();
-        DAQmxCreateAIVoltageChan(task, $"{DeviceAlias}/ai{channel}", "", DAQmxAITerminalConfiguration.RSE, minValue, maxValue, DAQmxAOVoltageUnits.Volts);
-        var status = DAQmxReadAnalogF64(task, 10, DAQmxDataLayout.GroupByChannel, readArray, (uint)readArray.Length, out _, readArray.Length);
-        ThrowError(status);
-        return readArray.Average();
-    }
-    /// <summary>
-    /// Handle errors here using DAQmxGetErrorString (or try DAQmxGetExtendedErrorInfo).
-    /// </summary>
-    public static void ThrowError(int code)
-    {
-        // No problems
-        if (code == 0)
-            return;
-
-        // Give us a message for that error code.
-        var error = new StringBuilder(2000);
-        DAQmxGetErrorString(code, error, 2000);
-        if (error.ToString().Trim().Length > 0)
-            throw new Exception(error.ToString());
-
-        // No message? Then just throw the error code.
-        throw new Exception(code + "");
-    }
+        => WriteAnalogOutput(channel, value, minVal, maxVal);
 }

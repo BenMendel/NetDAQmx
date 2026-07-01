@@ -1,28 +1,60 @@
-﻿namespace NetDAQmx.Helpers;
+namespace NetDAQmx.Helpers;
+
 /// <summary>
-/// The `Daq` functions usually operate on a "Task" handle.  This handle should be closed when finished.
-/// To ensure that it will be closed, we created this IDisposable object.
+/// Wraps a DAQmx task handle as an <see cref="IDisposable"/> resource.
+/// Always use inside a <c>using</c> statement, or call <see cref="IDisposable.Dispose"/> explicitly.
+/// A finalizer ensures the native handle is released even if disposal is skipped.
 /// </summary>
-public class DaqTask : IDisposable
+public class DaqTask : IDaqTask
 {
     internal IntPtr handle;
-    /// <summary>
-    /// Construct a daq task with a name (default is empty string)
-    /// </summary>
-    /// <param name="taskName">The task name</param>
+    private bool _disposed;
+
+    /// <summary>Creates a DAQmx task with an optional name.</summary>
+    /// <param name="taskName">Name assigned to the task; empty string is valid.</param>
     public DaqTask(string taskName = "")
     {
         var status = DllWrapper.DAQmxCreateTask(taskName, out handle);
         NIDAQ.ThrowError(status);
     }
 
+    /// <summary>Commits resources and transitions the task to the running state.</summary>
+    public void Start()
+    {
+        var status = DllWrapper.DAQmxStartTask(handle);
+        NIDAQ.ThrowError(status);
+    }
+
     /// <summary>
-    /// Fun Fact!  Dispose is not called in debug mode.  However, it does work when we 'Start Without Debugging'
-    /// https://stackoverflow.com/questions/518352/does-dispose-still-get-called-when-exception-is-thrown-inside-of-a-using-stateme
+    /// Stops the task, releasing hardware resources while preserving the
+    /// channel and timing configuration for a future <see cref="Start"/>.
     /// </summary>
+    public void Stop()
+    {
+        var status = DllWrapper.DAQmxStopTask(handle);
+        NIDAQ.ThrowError(status);
+    }
+
+    /// <summary>Ensures the native task handle is released if <see cref="IDisposable.Dispose"/> was not called.</summary>
+    ~DaqTask() => Dispose(false);
+
+    private void Dispose(bool disposing)
+    {
+        if (!_disposed && handle != IntPtr.Zero)
+        {
+            int status = DllWrapper.DAQmxClearTask(handle);
+            handle = IntPtr.Zero;
+            _disposed = true;
+            // Never throw from the finalizer path — it would terminate the process.
+            if (disposing)
+                NIDAQ.ThrowError(status);
+        }
+    }
+
+    /// <inheritdoc/>
     public void Dispose()
     {
-        var status = DllWrapper.DAQmxClearTask(handle);
-        NIDAQ.ThrowError(status);
+        Dispose(true);
+        GC.SuppressFinalize(this);
     }
 }
