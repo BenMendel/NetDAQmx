@@ -173,9 +173,11 @@ public class NIDAQ : IDaqDevice
         var status = DAQmxCreateAIVoltageChan(task.handle, $"{DeviceAlias}/ai{channel}", "",
             DAQmxAITerminalConfiguration.RSE, minValue, maxValue, DAQmxAIVoltageUnits.Volts);
         ThrowError(status);
-        status = DAQmxReadAnalogF64(task, timeout, DAQmxDataLayout.GroupByChannel,
-            buffer, (uint)buffer.Length, out _);
-        ThrowError(status);
+        for (int i = 0; i < buffer.Length; i++)
+        {
+            status = DAQmxReadAnalogScalarF64(task.handle, timeout, out buffer[i]);
+            ThrowError(status);
+        }
         return buffer.Average();
     }
 
