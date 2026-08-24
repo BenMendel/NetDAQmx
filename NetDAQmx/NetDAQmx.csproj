@@ -1,19 +1,22 @@
 <Project Sdk="Microsoft.NET.Sdk">
 
-	<PropertyGroup>
-		<TargetFramework>net10.0</TargetFramework>
-		<ImplicitUsings>enable</ImplicitUsings>
-		<Nullable>enable</Nullable>
-		<Platforms>x86</Platforms>
-		<AllowUnsafeBlocks>true</AllowUnsafeBlocks>
-		<TreatWarningsAsErrors>true</TreatWarningsAsErrors>
-		<GeneratePackageOnBuild>True</GeneratePackageOnBuild>
-		<Version>2.0.0-beta4</Version>
-		<Title>NI-DAQ Communication Library</Title>
-		<Description>C# .NET 10 wrapper for NI-DAQmx (nicaiu.dll). Requires x86 platform target.</Description>
-		<PackageProjectUrl>https://github.com/jrdnwrth/NetDAQmx</PackageProjectUrl>
-		<NeutralLanguage>en</NeutralLanguage>
-		<GenerateDocumentationFile>True</GenerateDocumentationFile>
-	</PropertyGroup>
+  <PropertyGroup>
+    <TargetFrameworks>net10.0;net10.0-windows7.0;netstandard2.0</TargetFrameworks>
+    <Platforms>x86</Platforms>
+    <AllowUnsafeBlocks>true</AllowUnsafeBlocks>
+    <TreatWarningsAsErrors>true</TreatWarningsAsErrors>
+    <GenerateDocumentationFile>true</GenerateDocumentationFile>
+  </PropertyGroup>
+
+  <ItemGroup Label="NuGet">
+    <!-- https://learn.microsoft.com/nuget/reference/msbuild-targets#packing-an-icon-image-file -->
+    <None Include="NuGetIcon.png" Pack="true" PackagePath="\" />
+    <!-- https://learn.microsoft.com/nuget/reference/msbuild-targets#packagereadmefile -->
+    <None Include="..\README.md" Pack="true" PackagePath="\" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <PackageReference Include="Microsoft.SourceLink.GitHub" />
+  </ItemGroup>
 
 </Project>

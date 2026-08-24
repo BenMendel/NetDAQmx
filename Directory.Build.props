@@ -1,0 +1,33 @@
+<Project>
+
+  <PropertyGroup>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <Nullable>enable</Nullable>
+    <LangVersion>14</LangVersion>
+    <AccelerateBuildsInVisualStudio>true</AccelerateBuildsInVisualStudio>
+  </PropertyGroup>
+
+  <!-- See: https://learn.microsoft.com/nuget/create-packages/package-authoring-best-practices#package-metadata -->
+  <PropertyGroup Label="NuGet Details">
+    <Version>2.0.0-beta7</Version>
+    <Title>NI-DAQ Communication Library</Title>
+    <Authors>Redler Technologies</Authors>
+    <Description>C# .NET 10 wrapper for NI-DAQmx (nicaiu.dll). Requires x86 platform target.</Description>
+    <Copyright>Copyright © 2024-$([System.DateTime]::Now.ToString("yyyy")) Redler Technologies</Copyright>
+    <PackageLicenseExpression>MIT</PackageLicenseExpression>
+    <PackageIcon>NuGetIcon.png</PackageIcon>
+    <RepositoryUrl>https://github.com/jrdnwrth/NetDAQmx</RepositoryUrl>
+    <PackageProjectUrl>https://github.com/jrdnwrth/NetDAQmx</PackageProjectUrl>
+    <PackageReadmeFile>README.md</PackageReadmeFile>
+    <PackageRequireLicenseAcceptance>false</PackageRequireLicenseAcceptance>
+    <NeutralLanguage>en</NeutralLanguage>
+  </PropertyGroup>
+
+  <PropertyGroup Label="SourceLink">
+    <SymbolPackageFormat>snupkg</SymbolPackageFormat>
+    <PublishRepositoryUrl>true</PublishRepositoryUrl>
+    <EmbedUntrackedSources>true</EmbedUntrackedSources>
+    <IncludeSymbols>true</IncludeSymbols>
+  </PropertyGroup>
+
+</Project>

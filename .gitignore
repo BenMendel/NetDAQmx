@@ -2,6 +2,9 @@
 
 dependency-check-report.html
 
+# dotnet pack/publish output (see: publish-nuget skill)
+artifacts/
+
 #################
 ## Eclipse
 #################

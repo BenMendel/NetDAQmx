@@ -29,7 +29,7 @@ public class NIDAQ : IDaqDevice
         if (string.IsNullOrEmpty(deviceNames))
             return Array.Empty<string>();
 
-        return deviceNames.Split('\0', StringSplitOptions.RemoveEmptyEntries);
+        return deviceNames.Split(new[] { '\0' }, StringSplitOptions.RemoveEmptyEntries);
     }
 
     /// <summary>
